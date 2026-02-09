@@ -1,0 +1,200 @@
+"""
+Twilio WebSocket Manager
+Manages WebSocket connection from Twilio and coordinates with voice handler
+"""
+import json
+import base64
+import asyncio
+import threading
+import time
+from typing import Optional
+
+from utils.logger import setup_logger
+from utils.audio_utils import AudioConverter
+from voice.handler import VoiceHandler
+from config import Config
+
+logger = setup_logger(__name__)
+
+
+class TwilioWebSocketManager:
+    """
+    Manages Twilio WebSocket connection and coordinates with OpenAI voice handler
+    """
+    
+    def __init__(self, websocket, openai_api_key: str):
+        """
+        Initialize Twilio WebSocket manager
+        
+        Args:
+            websocket: Flask-Sock WebSocket connection
+            openai_api_key: OpenAI API key
+        """
+        self.ws = websocket
+        self.openai_api_key = openai_api_key
+        self.voice_handler: Optional[VoiceHandler] = None
+        self.event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.stream_sid: Optional[str] = None
+        self.call_sid: Optional[str] = None
+        self.media_count = 0
+    
+    def handle_connection(self):
+        """
+        Main handler for Twilio WebSocket connection
+        Receives messages from Twilio and routes them appropriately
+        """
+        logger.info("📞 Twilio WebSocket connected")
+        
+        try:
+            while True:
+                # Receive message from Twilio
+                message = self.ws.receive(timeout=None)
+                if not message:
+                    break
+                
+                data = json.loads(message)
+                event_type = data.get("event")
+                
+                # Route to appropriate handler
+                if event_type == "start":
+                    self._handle_start(data)
+                
+                elif event_type == "media":
+                    self._handle_media(data)
+                
+                elif event_type == "stop":
+                    self._handle_stop(data)
+                    break
+                
+                elif event_type == "mark":
+                    # Mark events for synchronization
+                    pass
+        
+        except Exception as e:
+            logger.error(f"Error in Twilio handler: {e}")
+        
+        finally:
+            self._cleanup()
+    
+    def _handle_start(self, data: dict):
+        """
+        Handle stream start event from Twilio
+        
+        Args:
+            data: Start event data
+        """
+        start_data = data.get("start", {})
+        self.stream_sid = start_data.get("streamSid")
+        self.call_sid = start_data.get("callSid")
+        
+        logger.info(f"✓ Stream started - Call SID: {self.call_sid}")
+        
+        # Initialize voice handler
+        self.voice_handler = VoiceHandler(
+            stream_sid=self.stream_sid,
+            call_sid=self.call_sid,
+            twilio_callback=self._send_audio_to_twilio,
+            openai_api_key=self.openai_api_key
+        )
+        
+        # Start voice handler in separate thread with its own event loop
+        self.event_loop = asyncio.new_event_loop()
+        
+        def run_voice_handler():
+            asyncio.set_event_loop(self.event_loop)
+            self.event_loop.run_until_complete(self.voice_handler.connect_and_run())
+        
+        thread = threading.Thread(target=run_voice_handler, daemon=True)
+        thread.start()
+        
+        # Give OpenAI time to connect
+        time.sleep(0.5)
+        
+        logger.info("✓ Voice handler started")
+    
+    def _handle_media(self, data: dict):
+        """
+        Handle media (audio) event from Twilio
+        
+        Args:
+            data: Media event data
+        """
+        self.media_count += 1
+        
+        if self.media_count == 1:
+            logger.info("📥 Started receiving media from Twilio")
+        
+        if self.media_count % 100 == 0:
+            logger.debug(f"📥 Received {self.media_count} media packets")
+        
+        media_data = data.get("media", {})
+        mulaw_b64 = media_data.get("payload")
+        
+        if not mulaw_b64 or not self.voice_handler:
+            return
+        
+        try:
+            # Convert Twilio audio to OpenAI format
+            mulaw = base64.b64decode(mulaw_b64)
+            pcm_16khz = AudioConverter.twilio_to_openai(mulaw)
+            openai_audio_b64 = base64.b64encode(pcm_16khz).decode()
+            
+            # Send to OpenAI
+            asyncio.run_coroutine_threadsafe(
+                self.voice_handler.send_audio_from_user(openai_audio_b64),
+                self.event_loop
+            )
+        
+        except Exception as e:
+            logger.error(f"Error processing media: {e}")
+    
+    def _handle_stop(self, data: dict):
+        """
+        Handle stream stop event from Twilio
+        
+        Args:
+            data: Stop event data
+        """
+        logger.info(f"📞 Call ended - Total media packets: {self.media_count}")
+    
+    def _send_audio_to_twilio(self, mulaw_b64: str):
+        """
+        Send audio back to Twilio
+        
+        This is called by voice handler when it has audio to send
+        
+        Args:
+            mulaw_b64: Base64 encoded mulaw audio
+        """
+        try:
+            self.ws.send(json.dumps({
+                "event": "media",
+                "streamSid": self.stream_sid,
+                "media": {
+                    "payload": mulaw_b64
+                }
+            }))
+        except Exception as e:
+            logger.error(f"Error sending audio to Twilio: {e}")
+    
+    def _cleanup(self):
+        """Cleanup resources when connection closes"""
+        if self.voice_handler:
+            self.voice_handler.stop()
+        
+        if self.event_loop:
+            self.event_loop.stop()
+        
+        logger.info("✓ Twilio WebSocket manager cleaned up")
+
+
+def create_twilio_manager(websocket, openai_api_key: str):
+    """
+    Factory function to create and run Twilio manager
+    
+    Args:
+        websocket: Flask-Sock WebSocket connection
+        openai_api_key: OpenAI API key
+    """
+    manager = TwilioWebSocketManager(websocket, openai_api_key)
+    manager.handle_connection()
