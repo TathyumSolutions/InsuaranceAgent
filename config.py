@@ -33,7 +33,7 @@ class Config:
     LOG_FILE = os.getenv("LOG_FILE", "logs/app.log")
     
     # Audio Configuration
-    AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
+    AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", "24000"))
     VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.5"))
     SILENCE_DURATION_MS = int(os.getenv("SILENCE_DURATION_MS", "700"))
     

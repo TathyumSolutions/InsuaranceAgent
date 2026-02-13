@@ -73,16 +73,31 @@ def resample_16khz_to_8khz(pcm_16khz: Bytes) -> Bytes:
 def resample_24khz_to_8khz(pcm_24khz: Bytes) -> Bytes:
     """
     Resample PCM16 audio from 24kHz to 8kHz
-    
+
     OpenAI sometimes sends 24kHz audio by default
-    
+
     Args:
         pcm_24khz: PCM16 audio at 24kHz
-    
+
     Returns:
         PCM16 audio at 8kHz
     """
     return audioop.ratecv(pcm_24khz, 2, 1, 24000, 8000, None)[0]
+
+
+def resample_8khz_to_24khz(pcm_8khz: Bytes) -> Bytes:
+    """
+    Resample PCM16 audio from 8kHz to 24kHz
+
+    Twilio uses 8kHz, OpenAI Realtime API expects 24kHz
+
+    Args:
+        pcm_8khz: PCM16 audio at 8kHz
+
+    Returns:
+        PCM16 audio at 24kHz
+    """
+    return audioop.ratecv(pcm_8khz, 2, 1, 8000, 24000, None)[0]
 
 
 def downsample_by_factor(pcm_data: Bytes, factor: int) -> Bytes:
@@ -157,23 +172,23 @@ class AudioConverter:
     @staticmethod
     def twilio_to_openai(mulaw_data: Bytes) -> Bytes:
         """
-        Convert Twilio audio to OpenAI format
-        
-        mulaw 8kHz -> PCM16 8kHz -> PCM16 16kHz
-        
+        Convert Twilio audio to OpenAI Realtime API format
+
+        mulaw 8kHz -> PCM16 8kHz -> PCM16 24kHz
+
         Args:
             mulaw_data: Audio from Twilio
-        
+
         Returns:
-            PCM16 audio at 16kHz for OpenAI
+            PCM16 audio at 24kHz for OpenAI Realtime API
         """
         # Step 1: mulaw -> PCM16 (8kHz)
         pcm_8khz = ulaw_to_pcm16(mulaw_data)
-        
-        # Step 2: Resample 8kHz -> 16kHz
-        pcm_16khz = resample_8khz_to_16khz(pcm_8khz)
-        
-        return pcm_16khz
+
+        # Step 2: Resample 8kHz -> 24kHz (OpenAI Realtime API expects 24kHz)
+        pcm_24khz = resample_8khz_to_24khz(pcm_8khz)
+
+        return pcm_24khz
     
     @staticmethod
     def openai_to_twilio(pcm_16khz: Bytes) -> Bytes:

@@ -135,11 +135,11 @@ class VoiceHandler:
         if self.audio_chunks_sent == 1:
             logger.info("📤 Started sending audio to Twilio")
         
-        # Decode PCM16 from OpenAI (16kHz)
-        pcm_16khz = base64.b64decode(audio_b64)
-        
+        # Decode PCM16 from OpenAI (24kHz)
+        pcm_24khz = base64.b64decode(audio_b64)
+
         # Convert to Twilio format (mulaw 8kHz)
-        mulaw = AudioConverter.openai_to_twilio(pcm_16khz)
+        mulaw = AudioConverter.openai_24k_to_twilio(pcm_24khz)
         
         # Send to Twilio via callback
         mulaw_b64 = base64.b64encode(mulaw).decode()
