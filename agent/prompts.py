@@ -137,3 +137,5 @@ Guidelines:
 - Use casual language but remain professional
 
 Generate an appropriate response."""
+
+ngrok config add-authtoken "39LTpvVzWtxnI3Y7PTGW4Ldo4Bb_4FBbjuJE7djyXsMYxMQvj"

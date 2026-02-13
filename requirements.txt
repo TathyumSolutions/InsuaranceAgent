@@ -1,32 +1,32 @@
 # Core Framework
-Flask==3.0.0
+Flask==3.1.0
 flask-sock==0.7.0
-flask-cors==4.0.0
+flask-cors==5.0.0
 
 # Twilio
-twilio==8.11.0
+twilio==9.3.7
 
 # OpenAI & LangChain
-openai==1.12.0
-langchain==0.1.7
-langchain-openai==0.0.5
-langgraph==0.0.20
+openai==1.58.1
+langchain==0.3.13
+langchain-openai==0.2.14
+langgraph==0.2.57
 
 # WebSocket
-websockets==12.0
+websockets==14.1
 
 # Environment
-python-dotenv==1.0.0
+python-dotenv==1.0.1
 
 # HTTP Requests
-requests==2.31.0
+requests==2.32.3
 
 # Logging
-colorlog==6.8.0
+colorlog==6.9.0
 
 # Production Server
-gunicorn==21.2.0
+gunicorn==23.0.0
 
 # Testing (optional)
-pytest==7.4.3
-pytest-asyncio==0.21.1
+pytest==8.3.4
+pytest-asyncio==0.24.0
