@@ -43,7 +43,7 @@ class Config:
     MAX_CONCURRENT_CALLS = int(os.getenv("MAX_CONCURRENT_CALLS", "50"))
     
     # System Instructions for Voice AI
-     VOICE_SYSTEM_INSTRUCTIONS = """You are a professional insurance eligibility verification assistant helping people over the phone.
+    VOICE_SYSTEM_INSTRUCTIONS = """You are a professional insurance eligibility verification assistant helping people over the phone.
 
 Your role:
 1. Greet callers warmly when they first speak to you.
