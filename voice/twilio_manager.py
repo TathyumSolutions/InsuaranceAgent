@@ -37,6 +37,7 @@ class TwilioWebSocketManager:
         self.stream_sid: Optional[str] = None
         self.call_sid: Optional[str] = None
         self.media_count = 0
+        self.audio_chunks_sent = 0
     
     def handle_connection(self):
         """
@@ -94,22 +95,20 @@ class TwilioWebSocketManager:
             stream_sid=self.stream_sid,
             call_sid=self.call_sid,
             twilio_callback=self._send_audio_to_twilio,
-            openai_api_key=self.openai_api_key
+            openai_api_key=self.openai_api_key,
         )
         
         # Start voice handler in separate thread with its own event loop
         self.event_loop = asyncio.new_event_loop()
-        
+
         def run_voice_handler():
             asyncio.set_event_loop(self.event_loop)
             self.event_loop.run_until_complete(self.voice_handler.connect_and_run())
-        
+
         thread = threading.Thread(target=run_voice_handler, daemon=True)
         thread.start()
-        
-        # Give OpenAI time to connect
+
         time.sleep(0.5)
-        
         logger.info("✓ Voice handler started")
     
     def _handle_media(self, data: dict):
@@ -159,23 +158,25 @@ class TwilioWebSocketManager:
     
     def _send_audio_to_twilio(self, mulaw_b64: str):
         """
-        Send audio back to Twilio
-        
-        This is called by voice handler when it has audio to send
-        
-        Args:
-            mulaw_b64: Base64 encoded mulaw audio
+        Send mulaw audio back to Twilio over the WebSocket
         """
+        if not self.ws or not self.stream_sid:
+            logger.warning("Cannot send audio to Twilio: websocket or stream_sid missing")
+            return
+
+        msg = {
+            "event": "media",
+            "streamSid": self.stream_sid,
+            "media": {"payload": mulaw_b64},
+        }
+
         try:
-            self.ws.send(json.dumps({
-                "event": "media",
-                "streamSid": self.stream_sid,
-                "media": {
-                    "payload": mulaw_b64
-                }
-            }))
+            self.ws.send(json.dumps(msg))  # flask_sock ws is synchronous
+            self.audio_chunks_sent += 1
+            if self.audio_chunks_sent == 1:
+                logger.info("📤 First audio chunk sent to Twilio")
         except Exception as e:
-            logger.error(f"Error sending audio to Twilio: {e}")
+            logger.error(f"Error sending audio to Twilio: {e}", exc_info=True)
     
     def _cleanup(self):
         """Cleanup resources when connection closes"""
