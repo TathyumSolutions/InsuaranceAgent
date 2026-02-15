@@ -13,9 +13,19 @@ from typing import Dict
 from config import Config
 from utils.logger import setup_logger
 from voice.twilio_manager import create_twilio_manager
-from agent.eligibility_agent import EligibilityAgent
-from agent.state import ConversationState
-from api.eligibility_api import MockEligibilityAPI
+
+# Note: Non-voice API endpoints still use EligibilityAgent
+# Only the voice interface now uses embedded database
+try:
+    from agent.eligibility_agent import EligibilityAgent
+    from agent.state import ConversationState
+    from api.eligibility_api import MockEligibilityAPI
+    
+    # Initialize agent (for non-voice API endpoints only)
+    agent = EligibilityAgent(openai_api_key=Config.OPENAI_API_KEY)
+except ImportError:
+    logger.warning("⚠️ Agent components not available - only voice interface will work")
+    agent = None
 
 # Setup logging
 logger = setup_logger(__name__, Config.LOG_FILE, Config.LOG_LEVEL)
@@ -33,9 +43,9 @@ conversation_states: Dict[str, ConversationState] = {}
 
 # Banner
 logger.info("=" * 80)
-logger.info("  🎙️  STANDALONE INSURANCE ELIGIBILITY VOICE AGENT")
+logger.info("  🎙️  SIMPLIFIED INSURANCE ELIGIBILITY VOICE AGENT (POC)")
+logger.info("  📊  EMBEDDED DATABASE - NO API CALLS")
 logger.info("=" * 80)
-# logger.info(f"  OpenAI Model (Chat): {Config.OPENAI_MODEL}")
 logger.info(f"  OpenAI Model (Voice): {Config.OPENAI_REALTIME_MODEL}")
 logger.info(f"  Your Domain: {Config.YOUR_DOMAIN}")
 logger.info(f"  Port: {Config.PORT}")
