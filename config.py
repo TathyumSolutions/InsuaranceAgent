@@ -17,8 +17,8 @@ class Config:
     OPENAI_REALTIME_MODEL = "gpt-4o-realtime-preview"  # Updated model name
     
     # Audio Configuration for natural conversation
-    VAD_THRESHOLD = 0.2  # More sensitive to detect speech/interruptions
-    SILENCE_DURATION_MS = 300  # Faster response time
+    VAD_THRESHOLD = 0.3  # More sensitive to detect speech (was 0.2)
+    SILENCE_DURATION_MS = 500  # Faster response time (was 300)
     RESPONSE_TIMEOUT_MS = 5000  # Cancel if no response in 5 seconds
     
     # Voice settings for better conversation flow  

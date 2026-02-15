@@ -136,10 +136,10 @@ You must follow instructions to read messages exactly as written without any mod
                 },
                 "turn_detection": {
                     "type": "server_vad",
-                    "threshold": 0.5,              # Lowered threshold for better detection
-                    "silence_duration_ms": 800,    # Reduced silence duration for faster detection
+                    "threshold": 0.3,              # Lowered from 0.5 for better sensitivity
+                    "silence_duration_ms": 500,    # Reduced from 800ms for faster detection
                     "prefix_padding_ms": 300,
-                    "create_response": True         # Re-enable auto-response creation
+                    "create_response": True
                 },
                 "temperature": 0.6,
                 "max_response_output_tokens": 250,
@@ -148,7 +148,7 @@ You must follow instructions to read messages exactly as written without any mod
             },
         }
         await self.ws.send(json.dumps(session_update))
-        logger.info("✓ OpenAI session configured with improved VAD settings")
+        logger.info("✓ OpenAI session configured with more sensitive VAD settings")
         
     async def _cancel_current_response(self):
         """Cancel current OpenAI response with retry logic"""
@@ -263,6 +263,7 @@ You must follow instructions to read messages exactly as written without any mod
     async def _process_events(self):
         """Process OpenAI events with better VAD handling"""
         session_ready = False
+        last_speech_start = None
         
         try:
             async for message in self.ws:
@@ -286,12 +287,12 @@ You must follow instructions to read messages exactly as written without any mod
                             
                     elif event_type == "conversation.item.input_audio_transcription.completed":
                         transcript = data.get("transcript", "").strip()
+                        last_speech_start = None  # Reset timeout
                         if transcript:
                             logger.info(f"👤 User said: {transcript}")
                             
                             if self._is_english(transcript):
                                 logger.info("✅ English detected - processing normally")
-                                # Process immediately without additional delay
                                 await self._process_user_input_background(transcript)
                             else:
                                 logger.warning(f"⚠️ Non-English detected: {transcript}")
@@ -304,12 +305,14 @@ You must follow instructions to read messages exactly as written without any mod
                             
                     elif event_type == "input_audio_buffer.speech_started":
                         logger.info("🎤 User started speaking")
+                        last_speech_start = asyncio.get_event_loop().time()
                         # Cancel any ongoing response when user starts speaking
                         if self._response_in_progress:
                             await self._cancel_current_response()
                             
                     elif event_type == "input_audio_buffer.speech_stopped":
                         logger.info("🎤 User stopped speaking")
+                        last_speech_start = None
                         # Only commit if we're not in the middle of processing a response
                         if not self._response_in_progress:
                             try:
@@ -625,11 +628,11 @@ You must follow instructions to read messages exactly as written without any mod
     async def _ask_for_missing_verification_info(self):
         """Ask for missing verification information using exact speech"""
         if not self.full_name and not self.date_of_birth:
-            message = "I need your full name and date of birth for verification. Could you please provide both?"
+            message = "I'm here! I still need both your full name and your date of birth to verify your identity. Please go ahead."
         elif not self.full_name:
-            message = "I need your full name for verification. What's your full name?"
+            message = "I need your full name please. What's your complete name?"
         else:
-            message = "I need your date of birth for verification. What's your date of birth?"
+            message = "I need your date of birth please. What's your birth date?"
         
         await self._send_assistant_message(message)
 
