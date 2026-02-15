@@ -25,6 +25,10 @@ from .prompts import (
     CONVERSATIONAL_RESPONSE_TEMPLATE
 )
 from api.eligibility_api import MockEligibilityAPI
+import time
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class EligibilityAgent:
@@ -128,6 +132,8 @@ class EligibilityAgent:
     
     def _extract_information_node(self, state: ConversationState) -> ConversationState:
         """Extract information from the latest user message"""
+        start = time.perf_counter()
+        logger.debug(f"[extract_information] INPUT state: {state}")
         user_messages = [m for m in state["messages"] if m["role"] == "user"]
         if not user_messages:
             return state
@@ -163,6 +169,8 @@ class EligibilityAgent:
         except Exception as e:
             print(f"Extraction error: {e}")
         
+        elapsed = time.perf_counter() - start
+        logger.debug(f"[extract_information] OUTPUT state: {state} (took {elapsed:.2f}s)")
         return state
     
     def _resolve_codes_node(self, state: ConversationState) -> ConversationState:
@@ -259,6 +267,8 @@ Your response:"""
     
     def _call_api_node(self, state: ConversationState) -> ConversationState:
         """Call the eligibility API with a properly constructed payload."""
+        start = time.perf_counter()
+        logger.info(f"[call_api] Calling eligibility API with: {state.collected_fields}")
         # Last-chance code resolution (in case resolve_codes_node didn't run on a resumed state)
         if state.get("procedure_name") and not state.get("procedure_code"):
             result = self.eligibility_api.resolve_procedure_code(state["procedure_name"])
@@ -302,6 +312,8 @@ Your response:"""
             }
             state["api_called"] = True
 
+        elapsed = time.perf_counter() - start
+        logger.info(f"[call_api] API finished in {elapsed:.2f}s, response: {state.api_response}")
         return state
     
     def _validate_response_node(self, state: ConversationState) -> ConversationState:
@@ -341,6 +353,8 @@ Your response:"""
     
     def _generate_final_response_node(self, state: ConversationState) -> ConversationState:
         """Generate final response explaining eligibility result"""
+        start = time.perf_counter()
+        logger.info("[generate_final_response] Generating final message for caller")
         api_response = state.get("api_response", {})
         
         if not api_response:
@@ -372,6 +386,8 @@ Your response:"""
             response_text = response.content
         
         state = add_message(state, "assistant", response_text)
+        elapsed = time.perf_counter() - start
+        logger.info(f"[generate_final_response] Done in {elapsed:.2f}s; reply length={len(state.last_ai_message or '')}")
         return state
     
     def _route_next_action(self, state: ConversationState) -> str:

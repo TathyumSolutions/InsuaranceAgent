@@ -4,7 +4,6 @@ Handle audio format conversions between Twilio (mulaw) and OpenAI (PCM16)
 """
 import audioop
 import struct
-#from typing import bytes as Bytes
 
 
 def ulaw_to_pcm16(ulaw_data: bytes, width: int = 2) -> bytes:
@@ -215,4 +214,18 @@ class AudioConverter:
         # Step 2: PCM16 -> mulaw
         mulaw = pcm16_to_ulaw(pcm_8khz)
         
+        return mulaw
+
+    @staticmethod
+    def pcm16_to_mulaw(pcm_bytes: bytes, in_rate: int = 16000, out_rate: int = 8000) -> bytes:
+        """
+        Convert 16‑bit little‑endian PCM mono (e.g. 16 kHz) to 8 kHz μ‑law for Twilio.
+        """
+        if not pcm_bytes:
+            return b""
+
+        # Resample from in_rate (OpenAI) to out_rate (Twilio, 8kHz)
+        converted, _ = audioop.ratecv(pcm_bytes, 2, 1, in_rate, out_rate, None)
+        # Linear PCM -> μ‑law
+        mulaw = audioop.lin2ulaw(converted, 2)
         return mulaw

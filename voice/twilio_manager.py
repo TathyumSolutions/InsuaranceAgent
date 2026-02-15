@@ -114,9 +114,6 @@ class TwilioWebSocketManager:
     def _handle_media(self, data: dict):
         """
         Handle media (audio) event from Twilio
-        
-        Args:
-            data: Media event data
         """
         self.media_count += 1
         
@@ -133,19 +130,13 @@ class TwilioWebSocketManager:
             return
         
         try:
-            # Convert Twilio audio to OpenAI format
-            mulaw = base64.b64decode(mulaw_b64)
-            pcm_16khz = AudioConverter.twilio_to_openai(mulaw)
-            openai_audio_b64 = base64.b64encode(pcm_16khz).decode()
-            
-            # Send to OpenAI
+            # NO conversion: Twilio μ-law base64 → OpenAI g711_ulaw base64
             asyncio.run_coroutine_threadsafe(
-                self.voice_handler.send_audio_from_user(openai_audio_b64),
-                self.event_loop
+                self.voice_handler.send_audio_from_user(mulaw_b64),
+                self.event_loop,
             )
-        
         except Exception as e:
-            logger.error(f"Error processing media: {e}")
+            logger.error(f"Error processing media: {e}", exc_info=True)
     
     def _handle_stop(self, data: dict):
         """
@@ -165,6 +156,7 @@ class TwilioWebSocketManager:
             return
 
         msg = {
+        
             "event": "media",
             "streamSid": self.stream_sid,
             "media": {"payload": mulaw_b64},
