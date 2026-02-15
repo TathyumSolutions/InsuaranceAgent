@@ -90,10 +90,10 @@ class TwilioWebSocketManager:
         
         logger.info(f"✓ Stream started - Call SID: {self.call_sid}")
         
-        # Initialize voice handler
+        # Initialize voice handler with correct parameter names
         self.voice_handler = VoiceHandler(
-            stream_sid=self.stream_sid,
-            call_sid=self.call_sid,
+            call_sid=self.call_sid,  # Matches VoiceHandler.__init__
+            conversation_id=self.stream_sid,  # Use stream_sid as conversation_id
             twilio_callback=self._send_audio_to_twilio,
             openai_api_key=self.openai_api_key,
         )
@@ -130,7 +130,7 @@ class TwilioWebSocketManager:
             return
         
         try:
-            # NO conversion: Twilio μ-law base64 → OpenAI g711_ulaw base64
+            # Send mulaw audio to voice handler - it will handle the PCM16 conversion
             asyncio.run_coroutine_threadsafe(
                 self.voice_handler.send_audio_from_user(mulaw_b64),
                 self.event_loop,
@@ -171,12 +171,21 @@ class TwilioWebSocketManager:
             logger.error(f"Error sending audio to Twilio: {e}", exc_info=True)
     
     def _cleanup(self):
-        """Cleanup resources when connection closes"""
-        if self.voice_handler:
-            self.voice_handler.stop()
-        
-        if self.event_loop:
-            self.event_loop.stop()
+        """Clean up resources"""
+        try:
+            if self.voice_handler:
+                # Don't await the stop method, just call it
+                self.voice_handler.stop()
+                self.voice_handler = None
+                
+            if self.event_loop:
+                # Stop the event loop properly
+                if not self.event_loop.is_closed():
+                    self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                self.event_loop = None
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
         
         logger.info("✓ Twilio WebSocket manager cleaned up")
 

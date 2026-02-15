@@ -35,7 +35,7 @@ conversation_states: Dict[str, ConversationState] = {}
 logger.info("=" * 80)
 logger.info("  🎙️  STANDALONE INSURANCE ELIGIBILITY VOICE AGENT")
 logger.info("=" * 80)
-logger.info(f"  OpenAI Model (Chat): {Config.OPENAI_MODEL}")
+# logger.info(f"  OpenAI Model (Chat): {Config.OPENAI_MODEL}")
 logger.info(f"  OpenAI Model (Voice): {Config.OPENAI_REALTIME_MODEL}")
 logger.info(f"  Your Domain: {Config.YOUR_DOMAIN}")
 logger.info(f"  Port: {Config.PORT}")

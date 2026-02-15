@@ -37,16 +37,31 @@ class EligibilityAgent:
     Uses LangGraph for conversation flow management
     """
     
-    def __init__(self, openai_api_key: str, model: str = "gpt-4-turbo-preview"):
+    def __init__(self, openai_api_key: str = None):
+        """Initialize the eligibility agent with OpenAI API key"""
+        
+        # Use provided key or fallback to config
+        api_key = openai_api_key or Config.OPENAI_API_KEY
+        
+        if not api_key:
+            raise ValueError("OpenAI API key is required")
+            
+        # Initialize OpenAI client
         self.llm = ChatOpenAI(
-            api_key=openai_api_key,
-            model=model,
-            temperature=0.3
+            api_key=api_key,
+            model="gpt-4o-mini", 
+            temperature=0.1
         )
+        
+        # Initialize eligibility API
         self.eligibility_api = MockEligibilityAPI()
-        self.graph = self._build_graph()
+        
+        # Build the workflow graph
+        self.workflow = self._build_workflow()
+        
+        logger.info("🤖 Eligibility agent initialized")
     
-    def _build_graph(self) -> StateGraph:
+    def _build_workflow(self) -> StateGraph:
         """Build the LangGraph state machine"""
         workflow = StateGraph(ConversationState)
 
@@ -400,3 +415,54 @@ Your response:"""
             return "complete"
         else:
             return "gather_more"
+
+    async def process_user_input(self, transcript: str) -> dict:
+        """
+        Process user input and determine if ready for API call
+        Returns dict with agent state and readiness for eligibility check
+        """
+        try:
+            # Use the existing process_message method
+            result = self.process_message(
+                conversation_id="voice_call",
+                user_message=transcript,
+                current_state=getattr(self, '_current_state', None)
+            )
+            
+            # Store state for next call
+            self._current_state = result["state"]
+            
+            # Check if we have the minimum required fields for API
+            state = result["state"]
+            member_id = state.get("member_id")
+            dob = state.get("date_of_birth")
+            
+            # According to MockEligibilityAPI, only member_id is truly required
+            # DOB is optional for validation
+            has_required = bool(member_id)
+            
+            collected_data = {
+                "member_id": member_id,
+                "date_of_birth": dob,
+                "service_type": state.get("service_type", "general"),
+                "procedure_code": state.get("procedure_code"),
+                "ndc_code": state.get("ndc_code")
+            }
+            
+            return {
+                "ready_for_api_call": has_required and state.get("eligibility_determined", False),
+                "collected_data": collected_data,
+                "missing_fields": [] if has_required else ["member_id"],
+                "agent_response": result["response"],
+                "eligibility_determined": state.get("eligibility_determined", False)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error in process_user_input: {e}")
+            return {
+                "ready_for_api_call": False,
+                "collected_data": {},
+                "missing_fields": ["member_id"],
+                "agent_response": "I'm sorry, could you please provide your member ID?",
+                "eligibility_determined": False
+            }

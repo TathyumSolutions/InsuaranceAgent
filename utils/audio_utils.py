@@ -148,52 +148,31 @@ def validate_audio_data(audio_data: bytes) -> bool:
 
 
 class AudioConverter:
-    """
-    Comprehensive audio conversion class
-    Handles all conversions needed for Twilio <-> OpenAI integration
-    """
+    """Audio conversion utilities for voice processing"""
     
     @staticmethod
     def twilio_to_openai(mulaw_data: bytes) -> bytes:
-        """
-        Convert Twilio audio to OpenAI format
-        
-        mulaw 8kHz -> PCM16 8kHz -> PCM16 16kHz
-        
-        Args:
-            mulaw_data: Audio from Twilio
-        
-        Returns:
-            PCM16 audio at 16kHz for OpenAI
-        """
-        # Step 1: mulaw -> PCM16 (8kHz)
-        pcm_8khz = ulaw_to_pcm16(mulaw_data)
-        
-        # Step 2: Resample 8kHz -> 16kHz
-        pcm_16khz = resample_8khz_to_16khz(pcm_8khz)
-        
-        return pcm_16khz
+        """Convert Twilio mulaw to OpenAI PCM16 format"""
+        try:
+            # Convert mulaw to PCM16 and resample from 8kHz to 16kHz
+            pcm_8khz = ulaw_to_pcm16(mulaw_data)
+            pcm_16khz = resample_8khz_to_16khz(pcm_8khz)
+            return pcm_16khz
+        except Exception as e:
+            # Return empty bytes if conversion fails
+            return b''
     
     @staticmethod
-    def openai_to_twilio(pcm_16khz: bytes) -> bytes:
-        """
-        Convert OpenAI audio to Twilio format
-        
-        PCM16 16kHz -> PCM16 8kHz -> mulaw 8kHz
-        
-        Args:
-            pcm_16khz: Audio from OpenAI
-        
-        Returns:
-            mulaw audio at 8kHz for Twilio
-        """
-        # Step 1: Resample 16kHz -> 8kHz
-        pcm_8khz = resample_16khz_to_8khz(pcm_16khz)
-        
-        # Step 2: PCM16 -> mulaw
-        mulaw = pcm16_to_ulaw(pcm_8khz)
-        
-        return mulaw
+    def openai_to_twilio(pcm16_data: bytes) -> bytes:
+        """Convert OpenAI PCM16 to Twilio mulaw format"""
+        try:
+            # Resample from 16kHz to 8kHz and convert to mulaw
+            pcm_8khz = resample_16khz_to_8khz(pcm16_data)
+            mulaw_data = pcm16_to_ulaw(pcm_8khz)
+            return mulaw_data
+        except Exception as e:
+            # Return empty bytes if conversion fails
+            return b''
     
     @staticmethod
     def openai_24k_to_twilio(pcm_24khz: bytes) -> bytes:

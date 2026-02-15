@@ -14,9 +14,18 @@ class Config:
     
     # OpenAI Configuration
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-realtime")
-    OPENAI_REALTIME_MODEL = "gpt-realtime"
-    OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime"
+    OPENAI_REALTIME_MODEL = "gpt-4o-realtime-preview"  # Updated model name
+    
+    # Audio Configuration for natural conversation
+    VAD_THRESHOLD = 0.2  # More sensitive to detect speech/interruptions
+    SILENCE_DURATION_MS = 300  # Faster response time
+    RESPONSE_TIMEOUT_MS = 5000  # Cancel if no response in 5 seconds
+    
+    # Voice settings for better conversation flow  
+    VOICE_INTERRUPTION_ENABLED = True
+    ENGLISH_ONLY_MODE = True
+    MAX_RESPONSE_TOKENS = 300  # Increased from 100
+    TEMPERATURE = 0.6  # Minimum allowed for Realtime API (0.6-2.0)
     
     # Twilio Configuration
     TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -31,12 +40,6 @@ class Config:
     # Logging Configuration
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE = os.getenv("LOG_FILE", "logs/app.log")
-    
-    # Audio Configuration
-    AUDIO_SAMPLE_RATE = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
-    # More aggressive VAD for faster turn-taking
-    VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD", "0.25"))
-    SILENCE_DURATION_MS = int(os.getenv("SILENCE_DURATION_MS", "300"))
     
     # Session Configuration
     SESSION_TIMEOUT_SECONDS = int(os.getenv("SESSION_TIMEOUT_SECONDS", "300"))
