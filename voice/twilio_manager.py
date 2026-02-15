@@ -130,13 +130,10 @@ class TwilioWebSocketManager:
             return
         
         try:
-            # Send mulaw audio to voice handler - it will handle the PCM16 conversion
-            asyncio.run_coroutine_threadsafe(
-                self.voice_handler.send_audio_from_user(mulaw_b64),
-                self.event_loop,
-            )
+            # Fixed: Use handle_audio instead of send_audio_from_user
+            self.voice_handler.handle_audio(mulaw_b64)
         except Exception as e:
-            logger.error(f"Error processing media: {e}", exc_info=True)
+            logger.error(f"Error processing media: {e}")
     
     def _handle_stop(self, data: dict):
         """
@@ -171,23 +168,21 @@ class TwilioWebSocketManager:
             logger.error(f"Error sending audio to Twilio: {e}", exc_info=True)
     
     def _cleanup(self):
-        """Clean up resources"""
+        """
+        Clean up resources when connection ends
+        """
+        logger.info("🧹 Cleaning up Twilio WebSocket manager")
+        
         try:
             if self.voice_handler:
-                # Don't await the stop method, just call it
-                self.voice_handler.stop()
-                self.voice_handler = None
-                
-            if self.event_loop:
-                # Stop the event loop properly
-                if not self.event_loop.is_closed():
-                    self.event_loop.call_soon_threadsafe(self.event_loop.stop)
-                self.event_loop = None
-                
+                # Use the sync stop method
+                self.voice_handler.stop_sync()
+                logger.info("✓ Voice handler stopped")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-        
-        logger.info("✓ Twilio WebSocket manager cleaned up")
+        finally:
+            self.voice_handler = None
+            logger.info("✓ Twilio WebSocket manager cleaned up")
 
 
 def create_twilio_manager(websocket, openai_api_key: str):

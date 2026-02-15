@@ -4,6 +4,7 @@ Handle audio format conversions between Twilio (mulaw) and OpenAI (PCM16)
 """
 import audioop
 import struct
+import base64
 
 
 def ulaw_to_pcm16(ulaw_data: bytes, width: int = 2) -> bytes:
@@ -38,42 +39,24 @@ def pcm16_to_ulaw(pcm_data: bytes, width: int = 2) -> bytes:
     return audioop.lin2ulaw(pcm_data, width)
 
 
-def resample_8khz_to_16khz(pcm_8khz: bytes) -> bytes:
+def resample_8khz_to_24khz(pcm_8khz: bytes) -> bytes:
     """
-    Resample PCM16 audio from 8kHz to 16kHz
-    
-    Twilio uses 8kHz, OpenAI expects 16kHz
+    Resample PCM16 audio from 8kHz to 24kHz
     
     Args:
         pcm_8khz: PCM16 audio at 8kHz
     
     Returns:
-        PCM16 audio at 16kHz
+        PCM16 audio at 24kHz
     """
-    # audioop.ratecv(fragment, width, nchannels, inrate, outrate, state)
-    return audioop.ratecv(pcm_8khz, 2, 1, 8000, 16000, None)[0]
-
-
-def resample_16khz_to_8khz(pcm_16khz: bytes) -> bytes:
-    """
-    Resample PCM16 audio from 16kHz to 8kHz
-    
-    For sending OpenAI audio back to Twilio
-    
-    Args:
-        pcm_16khz: PCM16 audio at 16kHz
-    
-    Returns:
-        PCM16 audio at 8kHz
-    """
-    return audioop.ratecv(pcm_16khz, 2, 1, 16000, 8000, None)[0]
+    return audioop.ratecv(pcm_8khz, 2, 1, 8000, 24000, None)[0]
 
 
 def resample_24khz_to_8khz(pcm_24khz: bytes) -> bytes:
     """
     Resample PCM16 audio from 24kHz to 8kHz
     
-    OpenAI sometimes sends 24kHz audio by default
+    OpenAI sends 24kHz audio by default
     
     Args:
         pcm_24khz: PCM16 audio at 24kHz
@@ -84,127 +67,57 @@ def resample_24khz_to_8khz(pcm_24khz: bytes) -> bytes:
     return audioop.ratecv(pcm_24khz, 2, 1, 24000, 8000, None)[0]
 
 
-def downsample_by_factor(pcm_data: bytes, factor: int) -> bytes:
-    """
-    Downsample PCM16 audio by taking every Nth sample
-    
-    Alternative method for downsampling (less accurate but faster)
-    
-    Args:
-        pcm_data: PCM16 audio bytes
-        factor: Downsampling factor (e.g., 3 for 24kHz -> 8kHz)
-    
-    Returns:
-        Downsampled PCM16 audio
-    """
-    # Decode all samples
-    samples = [
-        struct.unpack('<h', pcm_data[i:i+2])[0] 
-        for i in range(0, len(pcm_data), 2)
-    ]
-    
-    # Take every Nth sample
-    downsampled = samples[::factor]
-    
-    # Re-encode
-    return b''.join(struct.pack('<h', s) for s in downsampled)
-
-
-def get_audio_duration(pcm_data: bytes, sample_rate: int = 8000) -> float:
-    """
-    Calculate duration of PCM16 audio in seconds
-    
-    Args:
-        pcm_data: PCM16 audio bytes
-        sample_rate: Sample rate in Hz (default: 8000)
-    
-    Returns:
-        Duration in seconds
-    """
-    num_samples = len(pcm_data) // 2  # 2 bytes per sample (16-bit)
-    return num_samples / sample_rate
-
-
-def validate_audio_data(audio_data: bytes) -> bool:
-    """
-    Validate that audio data is valid PCM16
-    
-    Args:
-        audio_data: Audio data to validate
-    
-    Returns:
-        True if valid, False otherwise
-    """
-    # Check if length is even (required for 16-bit samples)
-    if len(audio_data) % 2 != 0:
-        return False
-    
-    # Check if we can decode at least one sample
-    try:
-        struct.unpack('<h', audio_data[:2])
-        return True
-    except:
-        return False
-
-
 class AudioConverter:
     """Audio conversion utilities for voice processing"""
     
-    @staticmethod
-    def twilio_to_openai(mulaw_data: bytes) -> bytes:
-        """Convert Twilio mulaw to OpenAI PCM16 format"""
+    def twilio_to_openai(self, mulaw_data: bytes) -> bytes:
+        """Convert Twilio μLaw 8kHz to OpenAI PCM16 24kHz format"""
         try:
-            # Convert mulaw to PCM16 and resample from 8kHz to 16kHz
+            if not mulaw_data:
+                return b''
+            
+            # Step 1: Convert μLaw to PCM16 (still 8kHz)
             pcm_8khz = ulaw_to_pcm16(mulaw_data)
-            pcm_16khz = resample_8khz_to_16khz(pcm_8khz)
-            return pcm_16khz
+            
+            # Step 2: Resample from 8kHz to 24kHz for OpenAI
+            pcm_24khz = resample_8khz_to_24khz(pcm_8khz)
+            
+            return pcm_24khz
+            
         except Exception as e:
-            # Return empty bytes if conversion fails
+            print(f"Audio conversion error (Twilio->OpenAI): {e}")
             return b''
     
-    @staticmethod
-    def openai_to_twilio(pcm16_data: bytes) -> bytes:
-        """Convert OpenAI PCM16 to Twilio mulaw format"""
+    def openai_to_twilio(self, pcm16_data: bytes) -> bytes:
+        """Convert OpenAI PCM16 24kHz to Twilio μLaw 8kHz format"""
         try:
-            # Resample from 16kHz to 8kHz and convert to mulaw
-            pcm_8khz = resample_16khz_to_8khz(pcm16_data)
+            if not pcm16_data:
+                return b''
+                
+            # Step 1: Resample from 24kHz to 8kHz
+            pcm_8khz = resample_24khz_to_8khz(pcm16_data)
+            
+            # Step 2: Convert PCM16 to μLaw
             mulaw_data = pcm16_to_ulaw(pcm_8khz)
+            
             return mulaw_data
+            
         except Exception as e:
-            # Return empty bytes if conversion fails
+            print(f"Audio conversion error (OpenAI->Twilio): {e}")
             return b''
-    
-    @staticmethod
-    def openai_24k_to_twilio(pcm_24khz: bytes) -> bytes:
-        """
-        Convert OpenAI 24kHz audio to Twilio format
-        
-        Some OpenAI models output 24kHz by default
-        
-        Args:
-            pcm_24khz: Audio from OpenAI at 24kHz
-        
-        Returns:
-            mulaw audio at 8kHz for Twilio
-        """
-        # Step 1: Resample 24kHz -> 8kHz
-        pcm_8khz = resample_24khz_to_8khz(pcm_24khz)
-        
-        # Step 2: PCM16 -> mulaw
-        mulaw = pcm16_to_ulaw(pcm_8khz)
-        
-        return mulaw
 
-    @staticmethod
-    def pcm16_to_mulaw(pcm_bytes: bytes, in_rate: int = 16000, out_rate: int = 8000) -> bytes:
-        """
-        Convert 16‑bit little‑endian PCM mono (e.g. 16 kHz) to 8 kHz μ‑law for Twilio.
-        """
-        if not pcm_bytes:
-            return b""
+    def pcm16_to_ulaw(self, pcm_data: bytes) -> bytes:
+        """Direct PCM16 to μLaw conversion"""
+        try:
+            return pcm16_to_ulaw(pcm_data)
+        except Exception as e:
+            print(f"PCM16 to μLaw conversion error: {e}")
+            return b''
 
-        # Resample from in_rate (OpenAI) to out_rate (Twilio, 8kHz)
-        converted, _ = audioop.ratecv(pcm_bytes, 2, 1, in_rate, out_rate, None)
-        # Linear PCM -> μ‑law
-        mulaw = audioop.lin2ulaw(converted, 2)
-        return mulaw
+    def ulaw_to_pcm16(self, ulaw_data: bytes) -> bytes:
+        """Direct μLaw to PCM16 conversion"""
+        try:
+            return ulaw_to_pcm16(ulaw_data)
+        except Exception as e:
+            print(f"μLaw to PCM16 conversion error: {e}")
+            return b''
