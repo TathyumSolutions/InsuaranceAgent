@@ -214,6 +214,48 @@ class VoiceHandler:
         self.pending_audio_buffer.clear() 
         logger.info(f"✅ Flushed {buffer_size} audio chunks ({self.total_audio_sent_to_openai} total bytes)")
 
+    async def _trigger_initial_greeting(self):
+        """Trigger the AI to start with initial greeting immediately when call connects"""
+        try:
+            # Create a system message that prompts the agent to start greeting
+            greeting_trigger = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Call connected. Please start with your opening greeting now in English only. Use the exact greeting from your instructions."
+                        }
+                    ]
+                }
+            }
+            
+            # Send the trigger message
+            await self.ws.send(json.dumps(greeting_trigger))
+            logger.info("📤 Sent greeting trigger to OpenAI")
+            
+            # Small delay to ensure the item is created
+            await asyncio.sleep(0.1)
+            
+            # Request a response to make the AI start speaking - FIXED: using correct modalities
+            response_request = {
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],  # Fixed: must match session modalities
+                    "instructions": "Start the conversation with the opening greeting as per your instructions. Speak ONLY in English. Begin speaking immediately with the exact English greeting provided."
+                }
+            }
+            
+            await self.ws.send(json.dumps(response_request))
+            logger.info("🎤 Requested AI to start speaking greeting")
+            
+        except Exception as e:
+            logger.error(f"❌ Error triggering initial greeting: {e}")
+            # If greeting trigger fails, log but don't break the connection
+            logger.warning("⚠️ Initial greeting trigger failed - user will need to speak first")
+
     async def _configure_session(self):
         """Configure the Realtime session with OpenAI"""
         session_config = {
@@ -291,7 +333,11 @@ class VoiceHandler:
                         logger.info("✅ OpenAI session event: session.created")
                         
                     elif event_type == "session.updated":
-                        logger.info("✅ OpenAI session ready - conversation can begin")
+                        logger.info("✅ OpenAI session ready - triggering initial greeting")
+                        # Small delay to ensure session is fully configured
+                        await asyncio.sleep(0.2)
+                        # Trigger the AI to start speaking with the greeting
+                        await self._trigger_initial_greeting()
                         
                     elif event_type == "conversation.item.input_audio_transcription.completed":
                         transcript = data.get("transcript", "").strip()
