@@ -7,6 +7,7 @@ import json
 import asyncio
 import websockets
 import base64
+import time
 from typing import Callable, Optional
 
 from utils.logger import setup_logger
@@ -44,6 +45,20 @@ class VoiceHandler:
         self.running = True
         self._event_loop = None  # Store the event loop reference
         
+        # Audio buffer management for timing fix
+        self.pending_audio_buffer = []  # Queue audio while connecting
+        self.total_audio_sent_to_openai = 0
+        self.current_speech_audio_bytes = 0  # Track audio per speech session
+        self.min_audio_bytes_for_commit = 3200  # 100ms at 16kHz = 16000 samples/sec * 2 bytes * 0.1sec
+        self.openai_connected = False
+        
+        # Speech detection fallback
+        self.speech_start_time = None
+        self.last_audio_time = None
+        self.speech_timeout_task = None
+        self.max_speech_duration = 30.0  # 30 seconds max speech
+        self.silence_detection_timeout = 3.0  # 3 seconds of no new audio = silence
+        
         # OpenAI connection details
         self.api_url = f"wss://api.openai.com/v1/realtime?model={Config.OPENAI_REALTIME_MODEL}"
         self.headers = {
@@ -54,11 +69,10 @@ class VoiceHandler:
         logger.info(f"🎙️  Simplified voice handler initialized for call {call_sid}")
 
     def handle_audio(self, audio_data: str):
-        """Handle incoming audio from Twilio"""
+        """Handle incoming audio from Twilio - buffer if not connected"""
         try:
-            if not self.ws or self.ws.closed:
-                logger.warning("⚠️ WebSocket closed, cannot send audio")
-                return
+            # Update timing
+            self.last_audio_time = time.time()
             
             # Increment counter
             self.audio_chunks_received += 1
@@ -66,9 +80,18 @@ class VoiceHandler:
             if self.audio_chunks_received == 1:
                 logger.info("📥 First audio chunk received from Twilio")
             
-            # Convert mulaw to PCM16 and send to OpenAI
+            # Convert mulaw to PCM16
             mulaw_audio = base64.b64decode(audio_data)
             pcm_audio = self.audio_converter.twilio_to_openai(mulaw_audio)
+            
+            # If OpenAI not connected yet, buffer the audio
+            if not self.openai_connected or not self.ws or self.ws.closed:
+                self.pending_audio_buffer.append(pcm_audio)
+                if self.audio_chunks_received <= 5:  # Don't spam logs
+                    logger.debug(f"📦 Buffering audio chunk (total: {len(self.pending_audio_buffer)})")
+                return
+            
+            # Send to OpenAI immediately if connected
             pcm_b64 = base64.b64encode(pcm_audio).decode('utf-8')
             
             # Create append message
@@ -80,7 +103,7 @@ class VoiceHandler:
             # Schedule the coroutine in the correct event loop
             if self._event_loop and not self._event_loop.is_closed():
                 asyncio.run_coroutine_threadsafe(
-                    self.ws.send(json.dumps(append_message)),
+                    self._send_audio_to_openai_sync(append_message, len(pcm_audio)),
                     self._event_loop
                 )
             else:
@@ -88,6 +111,108 @@ class VoiceHandler:
             
         except Exception as e:
             logger.error(f"❌ Error handling audio: {e}")
+
+    async def _send_audio_to_openai_sync(self, append_message, audio_size):
+        """Send audio message to OpenAI and track bytes"""
+        try:
+            await self.ws.send(json.dumps(append_message))
+            self.total_audio_sent_to_openai += audio_size
+            self.current_speech_audio_bytes += audio_size
+            
+            # Add periodic logging for debugging
+            if self.total_audio_sent_to_openai % 10000 == 0:  # Every ~10KB
+                logger.debug(f"📤 Audio progress: {self.total_audio_sent_to_openai} total bytes sent")
+                
+        except Exception as e:
+            logger.error(f"❌ Error sending audio to OpenAI: {e}")
+
+    async def _start_speech_timeout_timer(self):
+        """Start fallback timer for speech detection"""
+        if self.speech_timeout_task:
+            self.speech_timeout_task.cancel()
+            
+        async def timeout_check():
+            try:
+                # Wait for max speech duration
+                await asyncio.sleep(self.max_speech_duration)
+                logger.warning(f"⏰ Speech timeout reached ({self.max_speech_duration}s) - forcing speech_stopped")
+                await self._force_speech_stopped("timeout")
+            except asyncio.CancelledError:
+                pass
+                
+        self.speech_timeout_task = asyncio.create_task(timeout_check())
+
+    async def _start_silence_detection(self):
+        """Start fallback silence detection"""
+        async def silence_check():
+            try:
+                while self.speech_start_time and self.running:
+                    await asyncio.sleep(0.5)  # Check every 500ms
+                    
+                    if self.last_audio_time and self.running:
+                        silence_duration = time.time() - self.last_audio_time
+                        if silence_duration >= self.silence_detection_timeout:
+                            logger.info(f"🔇 Detected {silence_duration:.1f}s silence - forcing speech_stopped")
+                            await self._force_speech_stopped("silence")
+                            break
+            except asyncio.CancelledError:
+                pass
+                
+        asyncio.create_task(silence_check())
+
+    async def _force_speech_stopped(self, reason: str):
+        """Force speech stopped event when OpenAI doesn't detect it"""
+        if not self.speech_start_time:
+            return  # No active speech
+            
+        logger.info(f"🎤 User stopped speaking (detected by {reason})")
+        
+        # Reset speech tracking
+        self.speech_start_time = None
+        if self.speech_timeout_task:
+            self.speech_timeout_task.cancel()
+            self.speech_timeout_task = None
+        
+        # Wait a moment for any final audio chunks
+        await asyncio.sleep(0.2)
+        
+        # Only commit if we have enough audio and no response in progress
+        if self.current_speech_audio_bytes >= self.min_audio_bytes_for_commit:
+            if not self._response_in_progress:
+                try:
+                    commit_message = {"type": "input_audio_buffer.commit"}
+                    await self.ws.send(json.dumps(commit_message))
+                    logger.info(f"📤 Audio buffer committed ({self.current_speech_audio_bytes} bytes)")
+                except Exception as e:
+                    logger.error(f"❌ Audio buffer commit error: {e}")
+        else:
+            logger.warning(f"⚠️ Skipping commit - insufficient audio ({self.current_speech_audio_bytes} bytes < {self.min_audio_bytes_for_commit} required)")
+
+    async def _flush_pending_audio(self):
+        """Send all buffered audio to OpenAI when connection is established"""
+        if not self.pending_audio_buffer:
+            return
+            
+        logger.info(f"📤 Flushing {len(self.pending_audio_buffer)} buffered audio chunks to OpenAI")
+        
+        for pcm_audio in self.pending_audio_buffer:
+            try:
+                pcm_b64 = base64.b64encode(pcm_audio).decode('utf-8')
+                append_message = {
+                    "type": "input_audio_buffer.append", 
+                    "audio": pcm_b64
+                }
+                await self.ws.send(json.dumps(append_message))
+                self.total_audio_sent_to_openai += len(pcm_audio)
+                self.current_speech_audio_bytes += len(pcm_audio)
+            except Exception as e:
+                logger.error(f"❌ Error flushing audio: {e}")
+                break
+        
+        # Clear buffer after flushing
+        buffer_size = len(self.pending_audio_buffer)
+        self.pending_audio_buffer.clear() 
+        logger.info(f"✅ Flushed {buffer_size} audio chunks ({self.total_audio_sent_to_openai} total bytes)")
 
     async def _configure_session(self):
         """Configure the Realtime session with OpenAI"""
@@ -131,10 +256,14 @@ class VoiceHandler:
                 close_timeout=10
             ) as websocket:
                 self.ws = websocket
+                self.openai_connected = True  # Mark as connected
                 logger.info(f"✅ Connected to OpenAI for call {self.call_sid}")
                 
                 # Configure session
                 await self._configure_session()
+                
+                # Flush any buffered audio immediately after connection
+                await self._flush_pending_audio()
                 
                 # Process events
                 await self._process_events()
@@ -143,6 +272,7 @@ class VoiceHandler:
             logger.error(f"💥 OpenAI connection error for call {self.call_sid}: {e}")
         finally:
             self.running = False
+            self.openai_connected = False
             self._event_loop = None
             logger.info(f"🔌 OpenAI connection closed for call {self.call_sid}")
 
@@ -169,27 +299,58 @@ class VoiceHandler:
                             logger.info(f"👤 User said: {transcript}")
                         
                     elif event_type == "conversation.item.input_audio_transcription.failed":
-                        logger.warning("⚠️ Audio transcription failed")
+                        error_details = data.get("error", {})
+                        content_index = data.get("content_index", "unknown")
+                        logger.warning(f"⚠️ Audio transcription failed - Content index: {content_index}, Error: {error_details}")
+                        logger.info(f"📊 Audio stats - Bytes sent: {self.current_speech_audio_bytes}, Total sent: {self.total_audio_sent_to_openai}")
                         
                     elif event_type == "input_audio_buffer.speech_started":
                         logger.info("🎤 User started speaking")
+                        # Track speech timing
+                        self.speech_start_time = time.time()
+                        # Reset counter for new speech session
+                        self.current_speech_audio_bytes = 0
                         # Cancel any ongoing response when user starts speaking
                         if self._response_in_progress:
                             await self._cancel_current_response()
                         
+                        # Start fallback timers
+                        await self._start_speech_timeout_timer()
+                        await self._start_silence_detection()
+                        
                     elif event_type == "input_audio_buffer.speech_stopped":
-                        logger.info("🎤 User stopped speaking")
-                        # Commit audio buffer for processing
-                        if not self._response_in_progress:
-                            try:
-                                commit_message = {"type": "input_audio_buffer.commit"}
-                                await self.ws.send(json.dumps(commit_message))
-                                logger.debug("📤 Audio buffer committed for processing")
-                            except Exception as e:
-                                logger.debug(f"Audio buffer commit error: {e}")
+                        logger.info("🎤 User stopped speaking (OpenAI detected)")
+                        
+                        # Cancel fallback timers since OpenAI detected it
+                        self.speech_start_time = None
+                        if self.speech_timeout_task:
+                            self.speech_timeout_task.cancel()
+                            self.speech_timeout_task = None
+                        
+                        # Wait a moment for any final audio chunks to arrive
+                        await asyncio.sleep(0.9)
+                        
+                        # Only commit if we have enough audio (minimum 100ms)
+                        if self.current_speech_audio_bytes >= self.min_audio_bytes_for_commit:
+                            if not self._response_in_progress:
+                                try:
+                                    commit_message = {"type": "input_audio_buffer.commit"}
+                                    await self.ws.send(json.dumps(commit_message))
+                                    logger.info(f"📤 Audio buffer committed ({self.current_speech_audio_bytes} bytes)")
+                                except Exception as e:
+                                    error_msg = str(e)
+                                    if "buffer_commit_empty" in error_msg or "buffer too small" in error_msg:
+                                        logger.error(f"❌ Buffer commit timing issue - OpenAI hasn't processed audio chunks yet")
+                                        logger.info("💡 Try speaking more clearly or for longer duration")
+                                    else:
+                                        logger.error(f"❌ Audio buffer commit error: {e}")
+                        else:
+                            logger.warning(f"⚠️ Skipping commit - insufficient audio ({self.current_speech_audio_bytes} bytes < {self.min_audio_bytes_for_commit} required)")
                         
                     elif event_type == "input_audio_buffer.committed":
-                        logger.debug("✅ Audio buffer committed - transcript should follow")
+                        logger.info("✅ Audio buffer committed - transcript should follow")
+                        # Reset counter after successful commit
+                        self.current_speech_audio_bytes = 0
                         
                     elif event_type == "response.created":
                         self._response_in_progress = True
@@ -256,6 +417,13 @@ class VoiceHandler:
         """Stop the voice handler"""
         logger.info(f"🛑 Stopping voice handler for call {self.call_sid}")
         self.running = False
+        self.openai_connected = False
+        
+        # Cancel any running timers
+        if self.speech_timeout_task:
+            self.speech_timeout_task.cancel()
+            self.speech_timeout_task = None
+        self.speech_start_time = None
         
         if self.ws and not self.ws.closed:
             try:
@@ -269,3 +437,8 @@ class VoiceHandler:
         logger.info(f"🛑 Stop requested for voice handler {self.call_sid}")
         # In a real implementation, you'd signal the async loop to stop
         self.running = False
+        self.openai_connected = False
+        self.speech_start_time = None
+        if self.speech_timeout_task:
+            self.speech_timeout_task.cancel()
+            self.speech_timeout_task = None
