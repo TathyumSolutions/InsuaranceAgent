@@ -226,7 +226,7 @@ class VoiceHandler:
                     "content": [
                         {
                             "type": "input_text",
-                            "text": "Call connected. Please start with your opening greeting now in English only. Use the exact greeting from your instructions."
+                            "text": "Call just connected. You are an insurance eligibility verification assistant. Start immediately with your exact opening greeting: 'Hello! I can help you in checking your insurance eligibility. May I please have your member ID?' Do not use any other greeting. Speak only in English."
                         }
                     ]
                 }
@@ -234,7 +234,7 @@ class VoiceHandler:
             
             # Send the trigger message
             await self.ws.send(json.dumps(greeting_trigger))
-            logger.info("📤 Sent greeting trigger to OpenAI")
+            logger.info("📤 Sent specific insurance greeting trigger to OpenAI")
             
             # Small delay to ensure the item is created
             await asyncio.sleep(0.1)
@@ -244,12 +244,12 @@ class VoiceHandler:
                 "type": "response.create",
                 "response": {
                     "modalities": ["text", "audio"],  # Fixed: must match session modalities
-                    "instructions": "Start the conversation with the opening greeting as per your instructions. Speak ONLY in English. Begin speaking immediately with the exact English greeting provided."
+                    "instructions": "You are an insurance eligibility verification assistant. Start immediately with the EXACT opening greeting from your system instructions: 'Hello! I am here to assist you with your insurance policy related queries. May I please have your member ID?' Do not deviate from this greeting. Speak ONLY in English."
                 }
             }
             
             await self.ws.send(json.dumps(response_request))
-            logger.info("🎤 Requested AI to start speaking greeting")
+            logger.info("🎤 Requested AI to start with specific insurance greeting")
             
         except Exception as e:
             logger.error(f"❌ Error triggering initial greeting: {e}")

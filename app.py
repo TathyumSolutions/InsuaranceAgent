@@ -85,7 +85,7 @@ def incoming_call():
     
     # Add greeting before connecting to AI
     response.say(
-        "Welcome to On-Shore Health Services. Please wait while I connect you to our Insuarance Assistant.",
+        "Welcome to On-Shore Health Services. Please wait while I connect you to our Insurance Assistant.",
         voice="Polly.Joanna"
     )
     
